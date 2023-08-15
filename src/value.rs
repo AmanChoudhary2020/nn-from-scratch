@@ -1,44 +1,32 @@
-use std::borrow::BorrowMut;
-use std::fmt;
-use std::ops::{Add, Mul};
+use std::cell::{Ref, RefCell};
+use std::ops::{Add, Deref};
+use std::rc::Rc;
 
-#[derive(Clone, Default, Debug)]
-pub struct Value {
-    pub data: f64,
-    pub grad: f64,
-    pub backward: Option<PropagateFn>,
-    pub prev: Vec<Value>,
-    pub op: char,
-}
+#[derive(Clone, Eq, PartialEq)]
+pub struct Value(Rc<RefCell<ValueInternal>>);
 
 impl Value {
-    pub fn tanh(&self) -> Value {
-        let result = self.data.tanh();
-        let prop_fn: PropagateFn = |out| {
-            let previous = out.prev.split_at_mut(1).0[0].borrow_mut();
-            previous.grad += (1.0 - out.data.powi(2)) * out.grad;
-        };
+    // pub fn from<T>(t: T) -> Value
+    // where
+    //     T: Into<ValueInternal>,
+    // {
+    //     t.into()
+    // }
 
-        Value {
-            data: result,
-            grad: Default::default(),
-            backward: Some(prop_fn),
-            prev: vec![self.clone()],
-            op: '+',
-        }
+    fn new(value: ValueInternal) -> Value {
+        Value(Rc::new(RefCell::new(value)))
     }
 }
 
-impl<'a> fmt::Display for Value {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Data: {}", self.data)
+impl Deref for Value {
+    type Target = Rc<RefCell<ValueInternal>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
-type PropagateFn = fn(value: &mut Value);
-
-// ---------------- ADD ---------------- //
-impl<'a> Add<Value> for Value {
+impl Add<Value> for Value {
     type Output = Value;
 
     fn add(self, other: Value) -> Self::Output {
@@ -46,79 +34,111 @@ impl<'a> Add<Value> for Value {
     }
 }
 
-impl<'a, 'b> Add<&'b Value> for &'a Value {
-    type Output = Value;
-
-    fn add(self, other: &'b Value) -> Self::Output {
-        add(self, other)
-    }
-}
-
-impl<'a> Add<&Value> for Value {
-    type Output = Value;
-
-    fn add(self, other: &Value) -> Self::Output {
-        add(&self, other)
-    }
-}
-
-fn add<'a>(a: &Value, b: &Value) -> Value {
-    let result = a.data + b.data;
+fn add(a: &Value, b: &Value) -> Value {
+    let result = a.borrow().data + b.borrow().data;
 
     let prop_fn: PropagateFn = |out| {
-        let previous = out.prev.split_at_mut(1);
-        previous.0[0].grad += out.grad;
-        previous.1[0].grad += out.grad;
+        let mut first = out.previous[0].borrow_mut();
+        let mut second = out.previous[1].borrow_mut();
+
+        // first.grad += out.grad;
+        // second.grad += out.grad;
     };
 
-    Value {
+    Value::new(ValueInternal {
         data: result,
-        grad: Default::default(),
-        backward: Some(prop_fn),
-        prev: vec![a.clone(), b.clone()],
-        op: '+',
+        gradient: Default::default(),
+        propagate: Some(prop_fn),
+        previous: vec![a.clone(), b.clone()],
+        operation: Some("+".to_string()),
+        label: None,
+    })
+}
+
+type PropagateFn = fn(value: &Ref<ValueInternal>);
+
+// // #[derive(Clone, Default, Debug)]
+// pub struct ValueInternal {
+//     pub data: f64,
+//     pub grad: f64,
+//     pub backward: Option<PropagateFn>,
+//     pub prev: Vec<Value>,
+//     pub op: char,
+// }
+
+pub struct ValueInternal {
+    data: f64,
+    gradient: f64,
+    label: Option<String>,
+    operation: Option<String>,
+    previous: Vec<Value>,
+    propagate: Option<PropagateFn>,
+}
+
+impl PartialEq for ValueInternal {
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data
+            && self.gradient == other.gradient
+            && self.label == other.label
+            && self.operation == other.operation
+            && self.previous == other.previous
     }
 }
 
-// ---------------- MUL ---------------- //
-impl Mul for Value {
-    type Output = Value;
+impl Eq for ValueInternal {}
 
-    fn mul(self, other: Value) -> Self::Output {
-        mul(&self, &other)
-    }
-}
+// impl<'a> fmt::Display for ValueInternal {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         write!(f, "Data: {}", self.data)
+//     }
+// }
 
-impl<'a, 'b> Mul<&'b Value> for &'a Value {
-    type Output = Value;
+// ---------------- ADD ---------------- //
+// impl Add<ValueInternal> for ValueInternal {
+//     type Output = ValueInternal;
 
-    fn mul(self, other: &'b Value) -> Self::Output {
-        mul(self, other)
-    }
-}
+//     fn add(self, other: ValueInternal) -> Self::Output {
+//         add(&self, &other)
+//     }
+// }
 
-impl Mul<&Value> for Value {
-    type Output = Value;
+// impl<'a, 'b> Add<&'b ValueInternal> for &ValueInternal {
+//     type Output = ValueInternal;
 
-    fn mul(self, other: &Value) -> Self::Output {
-        mul(&self, other)
-    }
-}
+//     fn add(self, other: &'b ValueInternal) -> Self::Output {
+//         add(self, other)
+//     }
+// }
 
-fn mul(a: &Value, b: &Value) -> Value {
-    let result = a.data * b.data;
+// impl<'a> Add<&ValueInternal> for ValueInternal {
+//     type Output = ValueInternal;
 
-    let prop_fn: PropagateFn = |out| {
-        let previous = out.prev.split_at_mut(1);
-        previous.0[0].grad += previous.1[0].grad * out.grad;
-        previous.1[0].grad += previous.0[0].grad * out.grad;
-    };
+//     fn add(self, other: &ValueInternal) -> Self::Output {
+//         add(&self, other)
+//     }
+// }
 
-    Value {
-        data: result,
-        grad: Default::default(),
-        backward: Some(prop_fn),
-        prev: vec![a.clone(), b.clone()],
-        op: '*',
-    }
-}
+// fn add(a: &ValueInternal, b: &ValueInternal) -> ValueInternal {
+//     let result = a.data + b.data;
+
+//     // let prop_fn: PropagateFn = |out| {
+//     //     // let first = out.prev.split_first_mut().unwrap();
+//     //     // // let mut second = out.prev.split_last_mut().unwrap();
+//     //     // let test = first.0;
+//     //     // test.grad += 1.0;
+//     //     // // first.1[0].grad += out.grad;
+//     //     let mut first = out.prev[0].borrow_mut();
+//     //     let mut second = out.prev[1].borrow_mut();
+
+//     //     first.grad += out.grad;
+//     //     second.grad += out.grad;
+//     // };
+
+//     ValueInternal {
+//         data: result,
+//         grad: Default::default(),
+//         backward: None,
+//         prev: Default::default(),
+//         op: '+',
+//     }
+// }
