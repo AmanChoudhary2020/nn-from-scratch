@@ -1,8 +1,17 @@
 mod value;
-
 use value::Value;
 
 fn main() {
+    let x1 = Value::from(2.0);
+    let x2 = Value::from(3.3);
+    let x3 = &x1 + &x2;
+    println!("{:?}\n", x1);
+    println!("{:?}\n", x2);
+    println!("{:?}\n", x3);
+
+    x3.backward();
+    println!("{:?}\n", x1);
+
     // let w1 = Value {
     //     data: -3.0,
     //     grad: Default::default(),
