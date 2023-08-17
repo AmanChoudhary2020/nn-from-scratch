@@ -1,12 +1,22 @@
+/*
+NOTES:
+`prev` member of InnerValue:
+- goal: should contain information pertaining to all previous nodes leading up to the node
+        represented by the current InnerValue
+- tried storing a vector of references to previous InnerValue objects
+    - issue with lifetimes
+- RefCell: gives runtime checked borrowing (as opposed to compile-time checked borrowing)
+*/
+
 use std::cell::{Ref, RefCell};
 use std::ops::{Add, Deref};
 use std::rc::Rc;
 
 #[derive(Clone, Eq, PartialEq, Debug)]
-pub struct Value(Rc<RefCell<ValueInternal>>);
+pub struct Value(Rc<RefCell<InnerValue>>);
 
 impl Value {
-    pub fn new(value: ValueInternal) -> Value {
+    pub fn new(value: InnerValue) -> Value {
         Value(Rc::new(RefCell::new(value)))
     }
 
@@ -19,9 +29,9 @@ impl Value {
 }
 
 impl<T: Into<f64>> From<T> for Value {
-    fn from(t: T) -> Value {
-        Value::new(ValueInternal::new(
-            t.into(),
+    fn from(data: T) -> Value {
+        Value::new(InnerValue::new(
+            data.into(),
             Default::default(),
             Vec::new(),
             None,
@@ -30,13 +40,14 @@ impl<T: Into<f64>> From<T> for Value {
 }
 
 impl Deref for Value {
-    type Target = Rc<RefCell<ValueInternal>>;
+    type Target = Rc<RefCell<InnerValue>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
+// ------------ ADD ------------ //
 impl Add<Value> for Value {
     type Output = Value;
 
@@ -64,19 +75,19 @@ fn add(a: &Value, b: &Value) -> Value {
         second.grad += out.grad;
     };
 
-    Value::new(ValueInternal {
+    Value::new(InnerValue {
         data: result,
-        grad: 2.0, // TODO: Change this back to 0.0
+        grad: 0.0,
         op: '+',
-        prev: vec![a.clone(), b.clone()],
+        prev: vec![a.clone(), b.clone()], // cloning a Value will increase the count on the reference-counting (rc) pointer
         backward: Some(prop_fn),
     })
 }
 
-type PropagateFn = fn(value: &Ref<ValueInternal>);
+type PropagateFn = fn(value: &Ref<InnerValue>);
 
 #[derive(Clone)]
-pub struct ValueInternal {
+pub struct InnerValue {
     data: f64,
     grad: f64,
     op: char,
@@ -84,19 +95,19 @@ pub struct ValueInternal {
     backward: Option<PropagateFn>,
 }
 
-impl ValueInternal {
-    fn new(data: f64, op: char, prev: Vec<Value>, propagate: Option<PropagateFn>) -> ValueInternal {
-        ValueInternal {
+impl InnerValue {
+    fn new(data: f64, op: char, prev: Vec<Value>, propagate: Option<PropagateFn>) -> InnerValue {
+        InnerValue {
             data,
             grad: 0.0,
-            op: op,
-            prev: prev,
+            op,
+            prev,
             backward: propagate,
         }
     }
 }
 
-impl PartialEq for ValueInternal {
+impl PartialEq for InnerValue {
     fn eq(&self, other: &Self) -> bool {
         self.data == other.data
             && self.grad == other.grad
@@ -105,36 +116,11 @@ impl PartialEq for ValueInternal {
     }
 }
 
-impl Eq for ValueInternal {}
+impl Eq for InnerValue {}
 
-// fn add(a: &ValueInternal, b: &ValueInternal) -> ValueInternal {
-//     let result = a.data + b.data;
-
-//     let prop_fn: PropagateFn = |out| {
-//         // let first = out.prev.split_first_mut().unwrap();
-//         // // let mut second = out.prev.split_last_mut().unwrap();
-//         // let test = first.0;
-//         // test.grad += 1.0;
-//         // // first.1[0].grad += out.grad;
-//         let mut first = out.prev[0].borrow_mut();
-//         let mut second = out.prev[1].borrow_mut();
-
-//         first.grad += out.grad;
-//         second.grad += out.grad;
-//     };
-
-//     ValueInternal {
-//         data: result,
-//         grad: Default::default(),
-//         op: '+',
-//         prev: vec![a.clone(), b.clone()],
-//         backward: Some(prop_fn),
-//     }
-// }
-
-impl std::fmt::Debug for ValueInternal {
+impl std::fmt::Debug for InnerValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ValueInternal")
+        f.debug_struct("InnerValue")
             .field("data", &self.data)
             .field("gradient", &self.grad)
             .field("operation", &self.op)
