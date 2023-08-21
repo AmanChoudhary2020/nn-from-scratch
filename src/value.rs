@@ -6,10 +6,11 @@ NOTES:
 - tried storing a vector of references to previous InnerValue objects
     - issue with lifetimes
 - RefCell: gives runtime checked borrowing (as opposed to compile-time checked borrowing)
+- Rc: allows nodes in neural network graph to be sharable
 */
 
 use std::cell::{Ref, RefCell};
-use std::ops::{Add, Deref};
+use std::ops::{Add, Deref, Mul};
 use std::rc::Rc;
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -79,6 +80,43 @@ fn add(a: &Value, b: &Value) -> Value {
         data: result,
         grad: 0.0,
         op: '+',
+        prev: vec![a.clone(), b.clone()], // cloning a Value will increase the count on the reference-counting (rc) pointer
+        backward: Some(prop_fn),
+    })
+}
+
+// ------------ MUL ------------ //
+impl Mul<Value> for Value {
+    type Output = Value;
+
+    fn mul(self, other: Value) -> Self::Output {
+        mul(&self, &other)
+    }
+}
+
+impl<'a, 'b> Mul<&'b Value> for &Value {
+    type Output = Value;
+
+    fn mul(self, other: &'b Value) -> Self::Output {
+        mul(self, other)
+    }
+}
+
+fn mul(a: &Value, b: &Value) -> Value {
+    let result = a.borrow().data * b.borrow().data;
+
+    let prop_fn: PropagateFn = |out| {
+        let mut first = out.prev[0].borrow_mut();
+        let mut second = out.prev[1].borrow_mut();
+
+        first.grad += second.data * out.grad;
+        second.grad += first.data * out.grad;
+    };
+
+    Value::new(InnerValue {
+        data: result,
+        grad: 0.0,
+        op: '*',
         prev: vec![a.clone(), b.clone()], // cloning a Value will increase the count on the reference-counting (rc) pointer
         backward: Some(prop_fn),
     })
