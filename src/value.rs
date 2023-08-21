@@ -10,6 +10,7 @@ NOTES:
 */
 
 use std::cell::{Ref, RefCell};
+use std::collections::HashSet;
 use std::ops::{Add, Deref, Mul};
 use std::rc::Rc;
 
@@ -22,10 +23,33 @@ impl Value {
     }
 
     pub fn backward(&self) {
+        let mut visited: HashSet<Value> = HashSet::new();
+        self.borrow_mut().grad = 1.0;
+
         let borrowed_value = self.borrow();
-        if let Some(prop_fn) = borrowed_value.backward {
-            prop_fn(&borrowed_value);
+        self.backward_helper(&mut visited, self);
+    }
+
+    // Topological Sort
+    fn backward_helper(&self, visited: &mut HashSet<Value>, value: &Value) {
+        if !visited.contains(&value) {
+            visited.insert(value.clone());
+
+            let val = value.borrow();
+            if let Some(backward_fn) = val.backward {
+                backward_fn(&val);
+            }
+
+            for child in &value.borrow().prev {
+                self.backward_helper(visited, child);
+            }
         }
+    }
+}
+
+impl std::hash::Hash for Value {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.borrow().hash(state);
     }
 }
 
@@ -164,5 +188,14 @@ impl std::fmt::Debug for InnerValue {
             .field("operation", &self.op)
             .field("previous", &self.prev)
             .finish()
+    }
+}
+
+impl std::hash::Hash for InnerValue {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.data.to_bits().hash(state);
+        self.grad.to_bits().hash(state);
+        self.op.hash(state);
+        self.prev.hash(state);
     }
 }
