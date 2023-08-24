@@ -18,6 +18,16 @@ use std::rc::Rc;
 pub struct Value(Rc<RefCell<InnerValue>>);
 
 impl Value {
+    pub fn create(data: f64) -> Value {
+        let value = InnerValue::new(
+            data,
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        );
+        Value(Rc::new(RefCell::new(value)))
+    }
+
     pub fn new(value: InnerValue) -> Value {
         Value(Rc::new(RefCell::new(value)))
     }
@@ -25,13 +35,27 @@ impl Value {
     pub fn backward(&self) {
         let mut visited: HashSet<Value> = HashSet::new();
         self.borrow_mut().grad = 1.0;
-
-        let borrowed_value = self.borrow();
-        self.backward_helper(&mut visited, self);
+        self.build_topo(&mut visited, self);
     }
 
-    // Topological Sort
-    fn backward_helper(&self, visited: &mut HashSet<Value>, value: &Value) {
+    pub fn tanh(&self) -> Value {
+        let result = self.borrow().data.tanh();
+
+        let prop_fn: PropagateFn = |value| {
+            let mut previous = value.prev[0].borrow_mut(); // should only have one element in previous array
+            previous.grad += (1.0 - value.data.powf(2.0)) * value.grad;
+        };
+
+        Value::new(InnerValue::new(
+            result,
+            "tanh".to_string(),
+            vec![self.clone()],
+            Some(prop_fn),
+        ))
+    }
+
+    // Inner function for topological Sort
+    fn build_topo(&self, visited: &mut HashSet<Value>, value: &Value) {
         if !visited.contains(&value) {
             visited.insert(value.clone());
 
@@ -41,7 +65,7 @@ impl Value {
             }
 
             for child in &value.borrow().prev {
-                self.backward_helper(visited, child);
+                self.build_topo(visited, child);
             }
         }
     }
@@ -94,16 +118,20 @@ fn add(a: &Value, b: &Value) -> Value {
 
     let prop_fn: PropagateFn = |out| {
         let mut first = out.prev[0].borrow_mut();
-        let mut second = out.prev[1].borrow_mut();
+        let second = out.prev[1].try_borrow_mut();
 
         first.grad += out.grad;
-        second.grad += out.grad;
+
+        match second {
+            Ok(mut s) => s.grad += out.grad,
+            Err(_) => first.grad += out.grad,
+        }
     };
 
     Value::new(InnerValue {
         data: result,
         grad: 0.0,
-        op: '+',
+        op: "+".to_string(),
         prev: vec![a.clone(), b.clone()], // cloning a Value will increase the count on the reference-counting (rc) pointer
         backward: Some(prop_fn),
     })
@@ -131,16 +159,21 @@ fn mul(a: &Value, b: &Value) -> Value {
 
     let prop_fn: PropagateFn = |out| {
         let mut first = out.prev[0].borrow_mut();
-        let mut second = out.prev[1].borrow_mut();
+        let second = out.prev[1].try_borrow_mut();
 
-        first.grad += second.data * out.grad;
-        second.grad += first.data * out.grad;
+        match second {
+            Ok(mut s) => {
+                first.grad += s.data * out.grad;
+                s.grad += first.data * out.grad;
+            }
+            Err(_) => first.grad += (first.data * out.grad) * 2.0,
+        }
     };
 
     Value::new(InnerValue {
         data: result,
         grad: 0.0,
-        op: '*',
+        op: "*".to_string(),
         prev: vec![a.clone(), b.clone()], // cloning a Value will increase the count on the reference-counting (rc) pointer
         backward: Some(prop_fn),
     })
@@ -152,13 +185,13 @@ type PropagateFn = fn(value: &Ref<InnerValue>);
 pub struct InnerValue {
     data: f64,
     grad: f64,
-    op: char,
+    op: String,
     prev: Vec<Value>,
     backward: Option<PropagateFn>,
 }
 
 impl InnerValue {
-    fn new(data: f64, op: char, prev: Vec<Value>, propagate: Option<PropagateFn>) -> InnerValue {
+    fn new(data: f64, op: String, prev: Vec<Value>, propagate: Option<PropagateFn>) -> InnerValue {
         InnerValue {
             data,
             grad: 0.0,
